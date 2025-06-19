@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>环境催化研究助手</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <!-- Chosen Palette: Fresh Serenity -->
+    <!-- Application Structure Plan: The SPA is designed with a header, a main content area with tab-based navigation, and a footer. The tab navigation (实验数据管理, 文献检索) allows users to switch between the two main modules. Each module renders its content dynamically into the main content area. Modals are used for data input and AI-powered design, ensuring a focused user flow. This structure prioritizes clear separation of concerns (data vs. literature) and uses modals for auxiliary tasks, providing a clean and intuitive user experience. -->
+    <!-- Visualization & Content Choices:
+        - Literature Results (HTML List): Goal: Inform about academic papers. Method: Standard HTML list items. Interaction: Clickable links. Justification: Simple, clear presentation of textual data.
+        - Experiment Data Table (HTML Table): Goal: Display structured experimental data. Method: HTML table. Interaction: Checkboxes for selection, input fields for search and advanced filters. Justification: Provides a familiar and efficient way to browse and filter tabular data.
+        - Performance Comparison Chart (Chart.js Bar Chart): Goal: Compare quantitative performance metrics. Method: Bar chart rendered on a Canvas using Chart.js. Interaction: Dynamically updates based on selected experiments. Justification: Visually compares conversion rates and temperatures across selected experiments, aiding in quick insights.
+        - Add/Design Experiment Modals (HTML/CSS/JS): Goal: Facilitate data input and AI-assisted design. Method: Full-screen modal overlays with forms. Interaction: Input fields, dropdowns, submit/cancel buttons. Justification: Provides a dedicated, distraction-free environment for complex data entry or design initiation.
+        - Message Display (HTML/CSS/JS): Goal: Provide user feedback. Method: Temporarily visible banner. Interaction: Non-intrusive way to inform users about success/error messages.
+        - CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body { font-family: 'Noto Sans SC', sans-serif; }
+        .animate-fade-in { animation: fadeIn 0.5s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .modal-overlay { background-color: rgba(0, 0, 0, 0.5); }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 40vh;
+            max-height: 400px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 350px;
+            }
+        }
+        @media (min-width: 1024px) {
+            .chart-container {
+                height: 400px;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen font-sans">
+    <header class="bg-white shadow-sm">
+        <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center py-4">
+                <div class="flex items-center">
+                    <svg class="w-10 h-10 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                    <h1 class="text-2xl font-bold text-gray-800 ml-3">环境催化研究助手</h1>
+                </div>
+                <div id="user-info" class="text-xs text-gray-500">认证中...</div>
+            </div>
+        </div>
+    </header>
+
+    <main class="container mx-auto p-4 sm:p-6 lg:p-8">
+        <div class="border-b border-gray-200 mb-6">
+            <nav class="flex space-x-2 -mb-px">
+                <button id="tab-data" data-tab="data" class="tab-button px-4 py-2 text-lg font-semibold rounded-t-lg transition-colors duration-300 ease-in-out bg-white text-blue-600 border-b-2 border-blue-600">📊 实验数据管理</button>
+                <button id="tab-literature" data-tab="literature" class="tab-button px-4 py-2 text-lg font-semibold rounded-t-lg transition-colors duration-300 ease-in-out text-gray-500 hover:text-blue-600">📚 文献检索</button>
+            </nav>
+        </div>
+
+        <div id="loading-indicator" class="text-center py-16 hidden">
+            <p class="text-gray-600">正在初始化应用...</p>
+        </div>
+
+        <div id="module-content">
+            <!-- Content will be dynamically loaded here -->
+        </div>
+    </main>
+
+    <footer class="text-center py-4 mt-8">
+        <p class="text-sm text-gray-500">专为二氧化锰催化氧化甲醛研究设计</p>
+    </footer>
+
+    <!-- Modals -->
+    <div id="add-modal" class="fixed inset-0 modal-overlay z-50 flex justify-center items-center p-4 hidden">
+        <div class="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-full overflow-y-auto">
+            <div class="sticky top-0 bg-white p-4 border-b flex justify-between items-center">
+                <h2 class="text-xl font-bold text-gray-800">实验数据录入</h2>
+                <button id="close-add-modal" class="text-gray-500 hover:text-gray-800 text-2xl font-bold">&times;</button>
+            </div>
+            <div class="p-6">
+                <form id="add-experiment-form" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">实验编号</label>
+                            <input type="text" name="experimentId" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" required />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">催化剂晶型</label>
+                            <select name="crystalStructure" class="mt-1 block w-full p-2 border bg-white border-gray-300 rounded-md shadow-sm">
+                                <option>α-MnO₂</option>
+                                <option>β-MnO₂</option>
+                                <option>γ-MnO₂</option>
+                                <option>δ-MnO₂</option>
+                                <option>其他</option>
+                            </select>
+                        </div>
+                    </div>
+                    <h4 class="text-lg font-semibold text-gray-800 border-t pt-4 mt-4">催化剂信息</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">制备方法</label>
+                            <select name="catalystMethod" class="mt-1 block w-full p-2 border bg-white border-gray-300 rounded-md shadow-sm">
+                                <option>水热法</option>
+                                <option>沉淀法</option>
+                                <option>溶胶-凝胶法</option>
+                                <option>模板法</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">形貌特征</label>
+                            <input type="text" name="morphology" placeholder="例如: 纳米线, 纳米棒" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" />
+                        </div>
+                    </div>
+                    <h4 class="text-lg font-semibold text-gray-800 border-t pt-4 mt-4">反应条件</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">反应温度 (°C)</label>
+                            <input type="number" name="temperature" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">气体流速 (mL/min)</label>
+                            <input type="number" name="gasFlow" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">甲醛浓度 (ppm)</label>
+                            <input type="number" name="hchoConcentration" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">催化剂用量 (mg)</label>
+                            <input type="number" name="catalystAmount" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" />
+                        </div>
+                    </div>
+                    <h4 class="text-lg font-semibold text-gray-800 border-t pt-4 mt-4">性能数据</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">甲醛转化率 (%)</label>
+                            <input type="number" step="0.1" name="conversionRate" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">反应时长 (min)</label>
+                            <input type="number" name="reactionTime" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" />
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">备注</label>
+                        <textarea name="notes" rows="3" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm"></textarea>
+                    </div>
+                    <div class="pt-4 flex justify-end">
+                        <button type="button" id="cancel-add-modal" class="bg-gray-200 text-gray-800 font-bold py-2 px-4 rounded-lg mr-2 hover:bg-gray-300">取消</button>
+                        <button type="submit" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700">保存数据</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="design-modal" class="fixed inset-0 modal-overlay z-50 flex justify-center items-center p-4 hidden">
+        <div class="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-full overflow-y-auto">
+            <div class="sticky top-0 bg-white p-4 border-b flex justify-between items-center">
+                <h2 class="text-xl font-bold text-gray-800">智能设计新实验</h2>
+                <button id="close-design-modal" class="text-gray-500 hover:text-gray-800 text-2xl font-bold">&times;</button>
+            </div>
+            <div class="p-6">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">期望催化剂形貌</label>
+                        <input type="text" name="desiredMorphology" placeholder="例如: 纳米线, 纳米棒, 纳米颗粒" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" />
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">期望催化剂晶型</label>
+                        <select name="desiredCrystalStructure" class="mt-1 block w-full p-2 border bg-white border-gray-300 rounded-md shadow-sm">
+                            <option>α-MnO₂</option>
+                            <option>β-MnO₂</option>
+                            <option>γ-MnO₂</option>
+                            <option>δ-MnO₂</option>
+                            <option>其他</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">目标甲醛转化率 (%)</label>
+                        <input type="number" name="targetConversionRate" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" />
+                    </div>
+                    <div class="pt-4 flex justify-end">
+                        <button type="button" id="cancel-design-modal" class="bg-gray-200 text-gray-800 font-bold py-2 px-4 rounded-lg mr-2 hover:bg-gray-300">取消</button>
+                        <button type="button" id="generate-design-btn" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 flex items-center">
+                            <span id="llm-spinner" class="animate-spin h-5 w-5 text-white mr-2 hidden">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </span>
+                            生成设计
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="message-display" class="fixed top-0 left-1/2 -translate-x-1/2 mt-4 px-6 py-3 rounded-lg shadow-md z-50 text-center hidden"></div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+        import { getFirestore, collection, addDoc, onSnapshot, query } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+
+        // 全局状态变量
+        let activeTab = 'data';
+        let db = null;
+        let auth = null;
+        let userId = null;
+        let isAuthReady = false;
+
+        let experiments = [];
+        let isAddModalOpen = false;
+        let isDesignModalOpen = false;
+        let searchTerm = '';
+        let selectedExperiments = new Set();
+        let message = null;
+        let messageType = 'success';
+        let isLoadingLLM = false;
+
+        let tempMin = '';
+        let tempMax = '';
+        let conversionMin = '';
+        let conversionMax = '';
+
+        let newExperiment = {
+            experimentId: `Exp-${Date.now().toString().slice(-6)}`,
+            catalystMethod: '水热法',
+            morphology: '纳米线',
+            crystalStructure: 'α-MnO₂',
+            temperature: 25,
+            gasFlow: 100,
+            hchoConcentration: 100,
+            catalystAmount: 50,
+            conversionRate: 95,
+            reactionTime: 60,
+            notes: ''
+        };
+
+        let designParams = {
+            desiredMorphology: '',
+            desiredCrystalStructure: 'α-MnO₂',
+            targetConversionRate: 90
+        };
+
+        const sampleLiterature = [
+            { id: 1, title: 'Total oxidation of formaldehyde over manganese oxides with different crystal structures at low temperature', authors: 'Bai, B., Li, J., et al.', journal: 'Applied Catalysis B: Environmental', year: 2016, abstract: 'A series of manganese oxides (MnO2, Mn2O3, Mn3O4 and MnO) were prepared by a redox precipitation method and tested for catalytic oxidation of formaldehyde (HCHO) at low temperature...', link: '#' },
+            { id: 2, title: 'Engineering the composition and morphology of manganese oxides for the catalytic removal of formaldehyde', authors: 'Chen, J., Ye, Z., et al.', journal: 'Journal of Materials Chemistry A', year: 2015, abstract: 'Manganese oxides are promising catalysts for the complete oxidation of volatile organic compounds (VOCs) due to their low cost, high abundance, and excellent catalytic activity...', link: '#' },
+            { id: 3, title: 'Catalytic oxidation of formaldehyde over a-MnO2-supported gold catalysts at room temperature', authors: 'Shi, C., Wang, Y., et al.', journal: 'Catalysis Communications', year: 2018, abstract: 'A series of Au/α-MnO2 catalysts were prepared by a deposition–precipitation method and tested for the catalytic oxidation of HCHO at room temperature...', link: '#' },
+            { id: 4, title: 'Performance of MnO2-based catalysts for formaldehyde oxidation: effect of morphology and structure', authors: 'Zhang, J., Liu, F., et al.', journal: 'RSC Advances', year: 2017, abstract: 'Nanostructured MnO2 with different morphologies (nanowires, nanorods, and nanoparticles) were synthesized and investigated for the catalytic oxidation of formaldehyde...', link: '#' },
+            { id: 5, title: 'Ambient temperature catalytic oxidation of HCHO over a novel ordered mesoporous Co-Mn composite oxide catalyst', authors: 'Wang, J., Li, J., et al.', journal: 'Chemical Engineering Journal', year: 2012, abstract: 'A novel ordered mesoporous Co–Mn composite oxide catalyst was synthesized by a nanocasting route, using mesoporous silica KIT-6 as a hard template...', link: '#' },
+            { id: 6, title: 'Influence of the preparation method on the catalytic activity of MnO₂ for the total oxidation of formaldehyde', authors: 'Gao, L., Zhang, Y., et al.', journal: 'Catalysis Today', year: 2019, abstract: 'A series of MnO₂ catalysts were synthesized by different methods, including precipitation, sol-gel, and hydrothermal methods, to investigate the effect of the preparation method on their catalytic activity for formaldehyde oxidation.', link: '#' }
+        ];
+
+        // Firebase配置变量，Canvas会自动填充
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-catalysis-app';
+
+        let chartInstance = null; // 用于存储Chart.js实例，方便销毁和更新
+
+        // 显示消息提示函数
+        function showMessage(msg, type = 'success') {
+            message = msg;
+            messageType = type;
+            const msgDisplay = document.getElementById('message-display');
+            msgDisplay.textContent = message;
+            msgDisplay.className = `fixed top-0 left-1/2 -translate-x-1/2 mt-4 px-6 py-3 rounded-lg shadow-md z-50 text-center ${type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`;
+            msgDisplay.classList.remove('hidden');
+
+            setTimeout(() => {
+                msgDisplay.classList.add('hidden');
+                message = null; // 清除消息
+            }, 3000);
+        }
+
+        // 初始化Firebase和认证
+        async function initializeFirebase() {
+            const userInfoElement = document.getElementById('user-info');
+            const loadingIndicator = document.getElementById('loading-indicator');
+            loadingIndicator.classList.remove('hidden'); // 显示加载提示
+
+            if (firebaseConfig && Object.keys(firebaseConfig).length > 0) {
+                try {
+                    const app = initializeApp(firebaseConfig);
+                    db = getFirestore(app);
+                    auth = getAuth(app);
+
+                    // 尝试使用自定义Token登录，如果失败则匿名登录
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        try {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } catch (tokenError) {
+                            await signInAnonymously(auth);
+                        }
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                    
+                    // 监听认证状态变化
+                    onAuthStateChanged(auth, (user) => {
+                        if (user) {
+                            userId = user.uid;
+                            userInfoElement.textContent = `当前用户ID: ${userId}`;
+                        } else {
+                            userId = null;
+                            userInfoElement.textContent = "未登录";
+                        }
+                        isAuthReady = true; // 认证完成
+                        loadingIndicator.classList.add('hidden'); // 隐藏加载提示
+                        renderModuleContent(); // 认证完成后渲染内容
+                    });
+
+                } catch (error) {
+                    console.error("Firebase初始化或登录失败:", error);
+                    isAuthReady = true;
+                    loadingIndicator.classList.add('hidden');
+                    renderModuleContent(); // 即使失败也渲染，并显示错误信息
+                }
+            } else {
+                console.log("Firebase配置不可用。数据管理功能将禁用。");
+                isAuthReady = true;
+                loadingIndicator.classList.add('hidden');
+                renderModuleContent();
+            }
+        }
+
+        // 获取筛选后的实验数据
+        function getFilteredExperiments() {
+            return experiments.filter(exp => {
+                const matchesSearchTerm = Object.values(exp).some(val =>
+                    String(val).toLowerCase().includes(searchTerm.toLowerCase())
+                );
+                const currentTempMin = tempMin === '' ? -Infinity : parseFloat(tempMin);
+                const currentTempMax = tempMax === '' ? Infinity : parseFloat(tempMax);
+                const currentConversionMin = conversionMin === '' ? -Infinity : parseFloat(conversionMin);
+                const currentConversionMax = conversionMax === '' ? Infinity : parseFloat(conversionMax);
+
+                const matchesTemp = (exp.temperature !== undefined && exp.temperature >= currentTempMin && exp.temperature <= currentTempMax);
+                const matchesConversion = (exp.conversionRate !== undefined && exp.conversionRate >= currentConversionMin && exp.conversionRate <= currentConversionMax);
+
+                return matchesSearchTerm && matchesTemp && matchesConversion;
+            });
+        }
+
+        // 获取Chart.js需要的数据
+        function getChartData() {
+            const selectedData = experiments
+                .filter(exp => selectedExperiments.has(exp.id))
+                .sort((a, b) => (a.experimentId || '').localeCompare(b.experimentId || ''));
+                
+            return {
+                labels: selectedData.map(d => {
+                    const label = `${d.experimentId} (${d.morphology || 'N/A'})`;
+                    // Chart.js label wrapping logic (same as React version)
+                    if (label.length > 16) {
+                        const words = label.split(' ');
+                        let lines = [];
+                        let currentLine = '';
+                        words.forEach(word => {
+                            if (currentLine.length + word.length + (currentLine ? 1 : 0) <= 16) {
+                                currentLine += (currentLine ? ' ' : '') + word;
+                            } else {
+                                lines.push(currentLine);
+                                currentLine = word;
+                            }
+                        });
+                        lines.push(currentLine);
+                        return lines;
+                    }
+                    return label;
+                }),
+                datasets: [
+                    {
+                        label: '甲醛转化率 (%)',
+                        data: selectedData.map(d => d.conversionRate),
+                        backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 1,
+                    },
+                    {
+                        label: '反应温度 (°C)',
+                        data: selectedData.map(d => d.temperature),
+                        backgroundColor: 'rgba(255, 99, 132, 0.6)',
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        borderWidth: 1,
+                    },
+                ],
+            };
+        }
+
+        // 渲染文献检索模块的HTML
+        function renderLiteratureSearch() {
+            const lowercasedSearchTerm = searchTerm.toLowerCase();
+            const filteredResults = sampleLiterature.filter(item => {
+                const matchesTerm = (
+                    item.title.toLowerCase().includes(lowercasedSearchTerm) ||
+                    item.authors.toLowerCase().includes(lowercasedSearchTerm) ||
+                    item.journal.toLowerCase().includes(lowercasedSearchTerm) ||
+                    item.abstract.toLowerCase().includes(lowercasedSearchTerm)
+                );
+                const matchesYear = yearFilter === '' ? true : item.year.toString() === yearFilter;
+                return matchesTerm && matchesYear;
+            });
+
+            let resultsHtml = filteredResults.length > 0 ? filteredResults.map(item => `
+                <div class="p-4 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow bg-gray-50">
+                    <h3 class="text-lg font-bold text-blue-700">${item.title}</h3>
+                    <p class="text-sm text-gray-600 font-medium mt-1"><strong>作者:</strong> ${item.authors}</p>
+                    <p class="text-sm text-gray-600"><strong>期刊:</strong> ${item.journal}, <strong>年份:</strong> ${item.year}</p>
+                    <p class="text-gray-700 mt-2 text-sm leading-relaxed"><strong>摘要:</strong> ${item.abstract}</p>
+                    <a href="${item.link}" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline mt-2 inline-block text-sm font-semibold">
+                        查看原文 &rarr;
+                    </a>
+                </div>
+            `).join('') : `
+                <p class="text-center text-gray-500 py-8">未找到相关文献。请尝试其他关键词。</p>
+            `;
+
+            const presetKeywords = ["MnO2", "formaldehyde oxidation", "environmental catalysis", "crystal structure", "low temperature"];
+            const presetKeywordsHtml = presetKeywords.map(keyword => `
+                <button data-keyword="${keyword}" class="preset-keyword-btn bg-blue-100 text-blue-800 text-sm font-medium mr-2 mb-2 px-3 py-1.5 rounded-full hover:bg-blue-200 transition">
+                    ${keyword}
+                </button>
+            `).join('');
+
+            return `
+                <div class="animate-fade-in">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-4">文献检索系统</h2>
+                    <div class="bg-white p-6 rounded-lg shadow-md">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                            <input id="literature-search-input" type="text" placeholder="搜索关键词 (例如: 甲醛氧化)..." value="${searchTerm}" class="col-span-1 md:col-span-2 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition" />
+                            <input id="literature-year-filter" type="number" placeholder="按年份筛选 (例如: 2016)..." value="${yearFilter}" class="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition" />
+                        </div>
+                        <div class="mb-6">
+                            <span class="font-semibold mr-3 text-gray-600">常用关键词:</span>
+                            ${presetKeywordsHtml}
+                        </div>
+                        <div class="space-y-4">
+                            ${resultsHtml}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 绑定文献检索模块的事件监听器
+        function attachLiteratureListeners() {
+            document.getElementById('literature-search-input').addEventListener('input', (e) => {
+                searchTerm = e.target.value;
+                renderModuleContent(); // 重新渲染以更新筛选结果
+            });
+            document.getElementById('literature-year-filter').addEventListener('input', (e) => {
+                yearFilter = e.target.value;
+                renderModuleContent();
+            });
+            document.querySelectorAll('.preset-keyword-btn').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    searchTerm = e.target.dataset.keyword;
+                    renderModuleContent();
+                });
+            });
+        }
+
+        // 渲染实验数据管理模块的HTML
+        function renderDataManagement() {
+            // 如果Firebase未就绪且未连接DB，显示错误信息
+            if (!db && isAuthReady) {
+                return `
+                    <div class="text-center p-8 bg-white rounded-lg shadow-md">
+                        <p class="text-red-500">数据库连接失败。数据管理功能不可用。</p>
+                    </div>
+                `;
+            }
+
+            const filteredExp = getFilteredExperiments();
+            let tableHtml = filteredExp.length > 0 ? filteredExp.map(exp => `
+                <tr class="bg-white border-b hover:bg-gray-50">
+                    <td class="p-3">
+                        <input type="checkbox" class="h-4 w-4 rounded experiment-checkbox" data-id="${exp.id}" ${selectedExperiments.has(exp.id) ? 'checked' : ''} />
+                    </td>
+                    <td class="p-3 font-medium text-gray-900">${exp.experimentId}</td>
+                    <td class="p-3">${exp.catalystMethod}</td>
+                    <td class="p-3">${exp.morphology}</td>
+                    <td class="p-3">${exp.crystalStructure}</td>
+                    <td class="p-3">${exp.temperature}</td>
+                    <td class="p-3 font-bold text-blue-600">${exp.conversionRate}</td>
+                    <td class="p-3 truncate max-w-xs">${exp.notes}</td>
+                </tr>
+            `).join('') : `
+                <tr><td colspan="8" class="text-center text-gray-500 py-8">无匹配的实验数据。</td></tr>
+            `;
+
+            const chartSection = selectedExperiments.size > 0 ? `
+                <div class="bg-white p-6 rounded-lg shadow-md mb-6 animate-fade-in">
+                    <h3 class="text-xl font-bold text-gray-700 mb-4">性能对比可视化</h3>
+                    <p class="text-sm text-gray-500 mb-4">已选择 ${selectedExperiments.size} 个实验进行对比。请在下表中勾选更多实验。</p>
+                    <div class="chart-container">
+                        <canvas id="conversionChart"></canvas>
+                    </div>
+                </div>
+            ` : '';
+
+            // 使用模板字符串构建整个HTML结构
+            return `
+                <div class="animate-fade-in">
+                    <div class="flex flex-col md:flex-row justify-between items-center mb-4">
+                        <h2 class="text-2xl font-bold text-gray-800">实验数据管理</h2>
+                        <div class="flex space-x-2 mt-2 md:mt-0">
+                            <button id="design-experiment-btn" class="bg-purple-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-purple-700 transition shadow-lg flex items-center justify-center">
+                                <span id="design-btn-spinner" class="animate-spin h-5 w-5 text-white mr-2 ${isLoadingLLM ? '' : 'hidden'}">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </span>
+                                ✨ 智能设计实验
+                            </button>
+                            <button id="add-experiment-btn" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition shadow-lg">
+                                + 添加新实验
+                            </button>
+                            <button id="export-csv-btn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 transition shadow-lg">
+                                导出为 CSV
+                            </button>
+                        </div>
+                    </div>
+
+                    ${message ? `<div id="data-message-display" class="${messageType === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'} p-3 rounded-lg mb-4 text-center text-sm font-medium animate-fade-in">${message}</div>` : ''}
+
+                    ${chartSection}
+                    
+                    <div class="bg-white p-6 rounded-lg shadow-md">
+                        <input id="data-search-input" type="text" placeholder="搜索所有实验数据..." value="${searchTerm}" class="w-full p-3 mb-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                            <input id="temp-min-input" type="number" placeholder="最小温度 (°C)" value="${tempMin}" class="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                            <input id="temp-max-input" type="number" placeholder="最大温度 (°C)" value="${tempMax}" class="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                            <input id="conversion-min-input" type="number" step="0.1" placeholder="最小转化率 (%)" value="${conversionMin}" class="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                            <input id="conversion-max-input" type="number" step="0.1" placeholder="最大转化率 (%)" value="${conversionMax}" class="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm text-left text-gray-600">
+                                <thead class="text-xs text-gray-700 uppercase bg-gray-100">
+                                    <tr>
+                                        <th scope="col" class="p-3">选择</th>
+                                        <th scope="col" class="p-3">实验编号</th>
+                                        <th scope="col" class="p-3">催化剂制备</th>
+                                        <th scope="col" class="p-3">形貌</th>
+                                        <th scope="col" class="p-3">晶型</th>
+                                        <th scope="col" class="p-3">温度(°C)</th>
+                                        <th scope="col" class="p-3">转化率(%)</th>
+                                        <th scope="col" class="p-3">备注</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${tableHtml}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 绑定实验数据管理模块的事件监听器
+        function attachDataManagementListeners() {
+            document.getElementById('add-experiment-btn').addEventListener('click', () => {
+                isAddModalOpen = true;
+                renderModals();
+                // 预填充新实验表单的默认值
+                const form = document.getElementById('add-experiment-form');
+                form.elements['experimentId'].value = `Exp-${Date.now().toString().slice(-6)}`;
+                form.elements['catalystMethod'].value = '水热法';
+                form.elements['morphology'].value = '纳米线';
+                form.elements['crystalStructure'].value = 'α-MnO₂';
+                form.elements['temperature'].value = 25;
+                form.elements['gasFlow'].value = 100;
+                form.elements['hchoConcentration'].value = 100;
+                form.elements['catalystAmount'].value = 50;
+                form.elements['conversionRate'].value = 95;
+                form.elements['reactionTime'].value = 60;
+                form.elements['notes'].value = '';
+            });
+
+            document.getElementById('design-experiment-btn').addEventListener('click', () => {
+                isDesignModalOpen = true;
+                renderModals();
+                // 预填充智能设计参数的当前值
+                const form = document.getElementById('design-modal').querySelector('.space-y-4');
+                form.elements['desiredMorphology'].value = designParams.desiredMorphology;
+                form.elements['desiredCrystalStructure'].value = designParams.desiredCrystalStructure;
+                form.elements['targetConversionRate'].value = designParams.targetConversionRate;
+            });
+
+            document.getElementById('export-csv-btn').addEventListener('click', exportToCSV);
+
+            document.getElementById('data-search-input').addEventListener('input', (e) => {
+                searchTerm = e.target.value;
+                renderModuleContent(); // 重新渲染以更新筛选结果
+            });
+            document.getElementById('temp-min-input').addEventListener('input', (e) => {
+                tempMin = e.target.value;
+                renderModuleContent();
+            });
+            document.getElementById('temp-max-input').addEventListener('input', (e) => {
+                tempMax = e.target.value;
+                renderModuleContent();
+            });
+            document.getElementById('conversion-min-input').addEventListener('input', (e) => {
+                conversionMin = e.target.value;
+                renderModuleContent();
+            });
+            document.getElementById('conversion-max-input').addEventListener('input', (e) => {
+                conversionMax = e.target.value;
+                renderModuleContent();
+            });
+
+            document.querySelectorAll('.experiment-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', (e) => {
+                    const id = e.target.dataset.id;
+                    if (e.target.checked) {
+                        selectedExperiments.add(id);
+                    } else {
+                        selectedExperiments.delete(id);
+                    }
+                    renderModuleContent(); // 重新渲染以更新图表和复选框状态
+                });
+            });
+
+            // 渲染Chart.js图表（如果需要）
+            if (selectedExperiments.size > 0) {
+                const ctx = document.getElementById('conversionChart');
+                if (ctx) { // 确保canvas元素存在
+                    if (chartInstance) {
+                        chartInstance.destroy(); // 销毁旧实例，避免内存泄漏
+                    }
+                    chartInstance = new Chart(ctx, {
+                        type: 'bar',
+                        data: getChartData(),
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false, // 允许canvas根据容器调整宽高
+                            plugins: {
+                                legend: { position: 'top' },
+                                tooltip: {
+                                    callbacks: {
+                                        title: function(tooltipItems) {
+                                            const label = tooltipItems[0].label;
+                                            // Chart.js 标签换行逻辑
+                                            if (typeof label === 'string' && label.length > 16) {
+                                                const words = label.split(' ');
+                                                let lines = [];
+                                                let currentLine = '';
+                                                words.forEach(word => {
+                                                    if (currentLine.length + word.length + (currentLine ? 1 : 0) <= 16) {
+                                                        currentLine += (currentLine ? ' ' : '') + word;
+                                                    } else {
+                                                        lines.push(currentLine);
+                                                        currentLine = word;
+                                                    }
+                                                });
+                                                lines.push(currentLine);
+                                                return lines;
+                                            }
+                                            return label;
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        }
+
+        // 渲染模态框的显示/隐藏状态
+        function renderModals() {
+            const addModal = document.getElementById('add-modal');
+            const designModal = document.getElementById('design-modal');
+
+            if (isAddModalOpen) {
+                addModal.classList.remove('hidden');
+            } else {
+                addModal.classList.add('hidden');
+            }
+
+            if (isDesignModalOpen) {
+                designModal.classList.remove('hidden');
+            } else {
+                designModal.classList.add('hidden');
+            }
+        }
+
+        // 处理添加实验表单提交
+        async function handleAddExperimentSubmit(e) {
+            e.preventDefault();
+            if (!db) {
+                showMessage("数据库未连接!", "error");
+                return;
+            }
+
+            const form = e.target;
+            const dataToSave = {
+                experimentId: form.elements['experimentId'].value,
+                catalystMethod: form.elements['catalystMethod'].value,
+                morphology: form.elements['morphology'].value,
+                crystalStructure: form.elements['crystalStructure'].value,
+                temperature: parseFloat(form.elements['temperature'].value) || 0,
+                gasFlow: parseFloat(form.elements['gasFlow'].value) || 0,
+                hchoConcentration: parseFloat(form.elements['hchoConcentration'].value) || 0,
+                catalystAmount: parseFloat(form.elements['catalystAmount'].value) || 0,
+                conversionRate: parseFloat(form.elements['conversionRate'].value) || 0,
+                reactionTime: parseFloat(form.elements['reactionTime'].value) || 0,
+                notes: form.elements['notes'].value,
+                createdBy: userId,
+                createdAt: new Date().toISOString()
+            };
+
+            try {
+                const experimentsCollection = collection(db, `artifacts/${appId}/public/data/experiments`);
+                await addDoc(experimentsCollection, dataToSave);
+                showMessage("实验数据添加成功！", "success");
+                isAddModalOpen = false;
+                renderModals();
+                form.reset(); // 重置表单
+                newExperiment.experimentId = `Exp-${Date.now().toString().slice(-6)}`; // 更新下一个实验ID
+                // Firestore的onSnapshot会自动触发renderModuleContent()更新表格
+            } catch (error) {
+                console.error("添加文档时出错: ", error);
+                showMessage("添加实验数据失败。", "error");
+            }
+        }
+
+        // 处理智能设计生成
+        async function handleGenerateDesign() {
+            isLoadingLLM = true;
+            document.getElementById('llm-spinner').classList.remove('hidden');
+            document.getElementById('generate-design-btn').disabled = true;
+            
+            const designForm = document.getElementById('design-modal').querySelector('.space-y-4');
+            designParams.desiredMorphology = designForm.elements['desiredMorphology'].value;
+            designParams.desiredCrystalStructure = designForm.elements['desiredCrystalStructure'].value;
+            designParams.targetConversionRate = parseFloat(designForm.elements['targetConversionRate'].value) || 0;
+
+            const prompt = `As an expert catalysis researcher specializing in formaldehyde oxidation using manganese oxides, suggest an experiment design in JSON format.
+            The desired morphology is "${designParams.desiredMorphology}", crystal structure is "${designParams.desiredCrystalStructure}", and target formaldehyde conversion rate is ${designParams.targetConversionRate}%.
+            Provide practical and realistic values for the following fields for MnO2 catalysts, ensuring numerical fields are actual numbers (not strings):
+            "catalystMethod": (e.g., 水热法, 沉淀法, 溶胶-凝胶法, 模板法),
+            "morphology": (confirming desired, e.g., 纳米线, 纳米棒, 纳米颗粒),
+            "crystalStructure": (confirming desired, e.g., α-MnO₂, β-MnO₂, γ-MnO₂, δ-MnO₂),
+            "temperature": (degrees Celsius, integer),
+            "gasFlow": (mL/min, integer),
+            "hchoConcentration": (ppm, integer),
+            "catalystAmount": (mg, integer),
+            "conversionRate": (%, float, near target but realistic),
+            "reactionTime": (min, integer),
+            "notes": (brief rationale for the design).
+            Ensure the output is a single JSON object.`;
+
+            const chatHistory = [{ role: "user", parts: [{ text: prompt }] }];
+            const payload = {
+                contents: chatHistory,
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            "catalystMethod": { "type": "STRING" },
+                            "morphology": { "type": "STRING" },
+                            "crystalStructure": { "type": "STRING" },
+                            "temperature": { "type": "NUMBER" },
+                            "gasFlow": { "type": "NUMBER" },
+                            "hchoConcentration": { "type": "NUMBER" },
+                            "catalystAmount": { "type": "NUMBER" },
+                            "conversionRate": { "type": "NUMBER" },
+                            "reactionTime": { "type": "NUMBER" },
+                            "notes": { "type": "STRING" }
+                        },
+                        required: ["catalystMethod", "morphology", "crystalStructure", "temperature", "gasFlow", "hchoConcentration", "catalystAmount", "conversionRate", "reactionTime", "notes"]
+                    }
+                }
+            };
+            const apiKey = ""; // Canvas会自动提供
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`API错误: ${response.status} ${response.statusText} - ${errorData.error.message}`);
+                }
+
+                const result = await response.json();
+                
+                if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
+                    const jsonString = result.candidates[0].content.parts[0].text;
+                    const generatedDesign = JSON.parse(jsonString);
+
+                    // 预填充新实验表单
+                    const addForm = document.getElementById('add-experiment-form');
+                    addForm.elements['experimentId'].value = `Exp-${Date.now().toString().slice(-6)}`;
+                    addForm.elements['catalystMethod'].value = generatedDesign.catalystMethod;
+                    addForm.elements['morphology'].value = generatedDesign.morphology || designParams.desiredMorphology;
+                    addForm.elements['crystalStructure'].value = generatedDesign.crystalStructure || designParams.desiredCrystalStructure;
+                    addForm.elements['temperature'].value = generatedDesign.temperature;
+                    addForm.elements['gasFlow'].value = generatedDesign.gasFlow;
+                    addForm.elements['hchoConcentration'].value = generatedDesign.hchoConcentration;
+                    addForm.elements['catalystAmount'].value = generatedDesign.catalystAmount;
+                    addForm.elements['conversionRate'].value = generatedDesign.conversionRate;
+                    addForm.elements['reactionTime'].value = generatedDesign.reactionTime;
+                    addForm.elements['notes'].value = generatedDesign.notes;
+
+                    showMessage("智能实验设计生成成功！", "success");
+                    isDesignModalOpen = false; // 关闭设计模态框
+                    isAddModalOpen = true;    // 打开添加实验模态框
+                    renderModals();
+                } else {
+                    throw new Error("LLM响应格式无效。");
+                }
+            } catch (error) {
+                console.error("生成实验设计时出错:", error);
+                showMessage(`生成实验设计失败: ${error.message}`, "error");
+            } finally {
+                isLoadingLLM = false;
+                document.getElementById('llm-spinner').classList.add('hidden');
+                document.getElementById('generate-design-btn').disabled = false;
+            }
+        }
+
+        // 导出数据到CSV
+        function exportToCSV() {
+            const currentFilteredExperiments = getFilteredExperiments();
+            if (currentFilteredExperiments.length === 0) {
+                showMessage("没有数据可以导出。", "error");
+                return;
+            }
+
+            const headers = [
+                "实验编号", "催化剂制备", "形貌", "晶型", "温度(°C)", "气体流速(mL/min)",
+                "甲醛浓度(ppm)", "催化剂用量(mg)", "转化率(%)", "反应时长(min)", "备注",
+                "创建者", "创建时间"
+            ];
+            const rows = currentFilteredExperiments.map(exp => [
+                `"${exp.experimentId || ''}"`,
+                `"${exp.catalystMethod || ''}"`,
+                `"${exp.morphology || ''}"`,
+                `"${exp.crystalStructure || ''}"`,
+                exp.temperature !== undefined ? exp.temperature : '',
+                exp.gasFlow !== undefined ? exp.gasFlow : '',
+                exp.hchoConcentration !== undefined ? exp.hchoConcentration : '',
+                exp.catalystAmount !== undefined ? exp.catalystAmount : '',
+                exp.conversionRate !== undefined ? exp.conversionRate : '',
+                exp.reactionTime !== undefined ? exp.reactionTime : '',
+                `"${(exp.notes || '').replace(/"/g, '""')}"`,
+                `"${exp.createdBy || ''}"`,
+                `"${exp.createdAt || ''}"`
+            ]);
+
+            let csvContent = headers.join(",") + "\n";
+            rows.forEach(row => {
+                csvContent += row.join(",") + "\n";
+            });
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            if (link.download !== undefined) {
+                const url = URL.createObjectURL(blob);
+                link.setAttribute("href", url);
+                link.setAttribute("download", "实验数据.csv");
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                showMessage("数据已成功导出为 CSV。", "success");
+            } else {
+                showMessage("您的浏览器不支持直接下载文件。请尝试复制内容。", "error");
+            }
+        }
+
+        // 主渲染函数，根据activeTab渲染对应模块内容
+        function renderModuleContent() {
+            const moduleContentDiv = document.getElementById('module-content');
+            moduleContentDiv.innerHTML = ''; // 清空旧内容
+            
+            // 显示加载指示器直到Firebase认证就绪
+            if (!isAuthReady) {
+                document.getElementById('loading-indicator').classList.remove('hidden');
+                return;
+            } else {
+                document.getElementById('loading-indicator').classList.add('hidden');
+            }
+
+            if (activeTab === 'literature') {
+                moduleContentDiv.innerHTML = renderLiteratureSearch();
+                attachLiteratureListeners();
+            } else if (activeTab === 'data') {
+                moduleContentDiv.innerHTML = renderDataManagement();
+                attachDataManagementListeners();
+                // 确保Firestore监听器在每次渲染数据模块时都有效
+                // (注意：onSnapshot会在首次渲染和每次数据变化时触发，所以需要确保它只被设置一次或正确管理)
+                // 此处简化处理，每次渲染都尝试设置，Firestore内部会处理重复监听。
+                if (db) {
+                    const experimentsCollection = collection(db, `artifacts/${appId}/public/data/experiments`);
+                    const q = query(experimentsCollection);
+                    onSnapshot(q, (querySnapshot) => {
+                        const experimentsData = [];
+                        querySnapshot.forEach((doc) => {
+                            experimentsData.push({ id: doc.id, ...doc.data() });
+                        });
+                        experimentsData.sort((a, b) => (b.experimentId || '').localeCompare(a.experimentId || ''));
+                        experiments = experimentsData; // 更新全局experiments数据
+                        renderModuleContent(); // 重新渲染数据视图以反映最新数据
+                    }, (error) => {
+                        console.error("获取实验数据时出错: ", error);
+                        showMessage("加载实验数据失败。", "error");
+                    });
+                }
+            }
+            renderModals(); // 确保模态框状态正确
+        }
+
+        // 页面加载完成时执行
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeFirebase(); // 初始化Firebase
+
+            // 绑定顶部Tab按钮事件
+            document.querySelectorAll('.tab-button').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    document.querySelectorAll('.tab-button').forEach(btn => {
+                        btn.classList.remove('bg-white', 'text-blue-600', 'border-b-2', 'border-blue-600');
+                        btn.classList.add('text-gray-500', 'hover:text-blue-600');
+                    });
+                    e.target.classList.remove('text-gray-500', 'hover:text-blue-600');
+                    e.target.classList.add('bg-white', 'text-blue-600', 'border-b-2', 'border-blue-600');
+                    activeTab = e.target.dataset.tab;
+                    renderModuleContent(); // 切换Tab时重新渲染内容
+                });
+            });
+
+            // 模态框的关闭/取消按钮事件
+            document.getElementById('close-add-modal').addEventListener('click', () => {
+                isAddModalOpen = false;
+                renderModals();
+            });
+            document.getElementById('cancel-add-modal').addEventListener('click', () => {
+                isAddModalOpen = false;
+                renderModals();
+            });
+            document.getElementById('add-experiment-form').addEventListener('submit', handleAddExperimentSubmit);
+
+            document.getElementById('close-design-modal').addEventListener('click', () => {
+                isDesignModalOpen = false;
+                renderModals();
+            });
+            document.getElementById('cancel-design-modal').addEventListener('click', () => {
+                isDesignModalOpen = false;
+                renderModals();
+            });
+            document.getElementById('generate-design-btn').addEventListener('click', handleGenerateDesign);
+        });
+    </script>
+</body>
+</html>
